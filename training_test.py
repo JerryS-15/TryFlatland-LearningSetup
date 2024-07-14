@@ -21,24 +21,24 @@ np.random.seed(1)
 torch.manual_seed(1)
 
 observation_tree_depth = 2
-n_agents = 15
-n_stadt = 5
+NUM_AGENT = 15
+NUM_CITIES = 5
 
 class Parameters:
     def __init__(self):
-        self.hidden_size = 128
+        self.hidden_size = 256
         self.buffer_size = 10000
-        self.batch_size = 64
-        self.update_every = 4
-        self.learning_rate = 0.001
+        self.batch_size = 128
+        self.update_every = 8
+        self.learning_rate = 0.0005
         self.tau = 0.001
         self.gamma = 0.99
-        self.buffer_min_size = 1000
+        self.buffer_min_size = 0
         self.use_gpu = False
 
 def create_env():
-    nAgents = n_agents
-    n_cities = n_stadt
+    nAgents = NUM_AGENT
+    n_cities = NUM_CITIES
     max_rails_between_cities = 2
     max_rails_in_city = 4
     seed = 0
@@ -70,53 +70,50 @@ def training_example(sleep_for_animation, do_rendering):
     
     # Observation parameters
     observation_radius = 3
-    # observation_tree_depth = obs_params.observation_tree_depth
-    # observation_radius = obs_params.observation_radius
-    # observation_max_path_depth = obs_params.observation_max_path_depth
 
     # Training parameters
     n_episodes = 20
     eps_start = 1.0
+    eps_end = 0.01
+    eps_decay = 0.997
 
     # Calculate the state size given the depth of the tree observation and the number of features
     n_features_per_node = env.obs_builder.observation_dim
     n_nodes = sum([np.power(4, i) for i in range(observation_tree_depth + 1)])
     state_size = n_features_per_node * n_nodes
+    #print("Number of Features per node: ", n_features_per_node)
 
     # The action space of flatland is 5 discrete actions
     action_size = 5
 
     # Max number of steps per episode
-    # This is the official formula used during evaluations
-    # See details in flatland.envs.schedule_generators.sparse_schedule_generator
-    # max_steps = int(4 * 2 * (env.height + env.width + (n_agents / n_cities)))
-    max_steps = env._max_episode_steps
+    max_steps = int(4 * 2 * (env.height + env.width + (NUM_AGENT / NUM_CITIES)))
+    # max_steps = env._max_episode_steps
 
     action_count = [0] * action_size
     action_dict = dict()
 
     scores = []
     completions = []
-    nb_steps = []
 
     parameters = Parameters()
-    agent_obs = [None] * n_agents
-    agent_prev_obs = [None] * n_agents
-    agent_prev_action = [2] * n_agents
-    update_values = [False] * n_agents
+    agent_obs = [None] * NUM_AGENT
+    agent_prev_obs = [None] * NUM_AGENT
+    agent_prev_action = [2] * NUM_AGENT
+    update_values = [False] * NUM_AGENT
 
     # Double Dueling DQN policy
     policy = DDDQNPolicy(state_size, action_size, parameters)
 
     for episode_idx in range(n_episodes + 1):
         obs, info = env.reset()
+        # print("INFO: ", info)
 
         if env_renderer is not None:
             env_renderer.reset()
 
         score = 0
-        nb_steps = 0
-        actions_taken = []
+        # actions_taken = []
 
         # Build initial agent-specific observations
         for agent in env.get_agent_handles():
@@ -130,9 +127,8 @@ def training_example(sleep_for_animation, do_rendering):
                 if info['action_required'][agent]:
                     update_values[agent] = True
                     action = policy.act(agent_obs[agent], eps=eps_start)
-
                     action_count[action] += 1
-                    actions_taken.append(action)
+                    # actions_taken.append(action)
                 else:
                     # An action is not required if the train hasn't joined the railway network,
                     # if it already reached its target, or if is currently malfunctioning.
@@ -150,17 +146,13 @@ def training_example(sleep_for_animation, do_rendering):
                 if update_values[agent] or done['__all__']:
                     # Only learn from timesteps where somethings happened
                     policy.step(agent_prev_obs[agent], agent_prev_action[agent], all_rewards[agent], agent_obs[agent], done[agent])
-
                     agent_prev_obs[agent] = agent_obs[agent].copy()
                     agent_prev_action[agent] = action_dict[agent]
-
+                # print(f"Agent {agent}: Reward {all_rewards[agent]}, Observation {agent_obs[agent]}")
                 # Preprocess the new observations
                 if next_obs[agent]:
                     agent_obs[agent] = normalize_observation(next_obs[agent], observation_tree_depth, observation_radius=observation_radius)
-
                 score += all_rewards[agent]
-
-            nb_steps = step
 
             if done['__all__']:
                 break
@@ -168,11 +160,10 @@ def training_example(sleep_for_animation, do_rendering):
 
         normalized_score = score / (max_steps * env.get_num_agents())
         scores.append(normalized_score)
-
         tasks_finished = sum(done[idx] for idx in env.get_agent_handles())
         completion = tasks_finished / max(1, env.get_num_agents())
         completions.append(completion)
-
+        eps_start = max(eps_end, eps_start * eps_decay)
         #nb_steps.append(final_step)
         print("\t✅ Eval: score {:.3f} done {:.1f}%".format(np.mean(score), np.mean(completion) * 100.0))
     
